@@ -2,8 +2,8 @@
 
 import argparse
 import socket
+import sys
 import urllib.request
-import json
 import scapy.all as scapy
 
 # Function to get MAC manufacturer via an open API (or fallback)
@@ -41,11 +41,24 @@ def check_common_ports(ip):
     return open_services if open_services else ["None detected"]
 
 # Function to scan the network for live hosts and gather extended info
-def scan(ip_range):
+def scan(ip_range, interface=None):
     arp = scapy.ARP(pdst=ip_range)
     broadcast = scapy.Ether(dst="ff:ff:ff:ff:ff:ff")
     arp_request_broadcast = broadcast / arp
-    answered_list = scapy.srp(arp_request_broadcast, timeout=1, verbose=False)[0]                                                                                                            
+
+    try:
+        kwargs = {"timeout": 2, "verbose": False}
+        if interface:
+            kwargs["iface"] = interface
+
+        answered_list = scapy.srp(arp_request_broadcast, **kwargs)[0]
+
+    except PermissionError:
+        print("[-] Error: Scapy requires root/administrator privileges to send ARP packets. Run with sudo")        
+        sys.exit(1)
+    except Exception as e:
+        print(f"[-] Network error during transmission: {e}")  
+        sys.exit(1)                                                                                                  
     
     clients_list = []                                                                                                                                                                        
     for element in answered_list:
@@ -55,26 +68,31 @@ def scan(ip_range):
         vendor = get_vendor(mac)
         services = check_common_ports(ip)
         
-        client_dict = {
+        clients_list.append({
             "ip": ip, 
             "mac": mac, 
             "hostname": hostname,
             "vendor": vendor,
             "services": ", ".join(services)
-        }
-        clients_list.append(client_dict)                                                                                                                                                     
+        })                                                                                                                                                    
     return clients_list                                                                                                                                                                      
 
 # Function to print the results in an expanded table format
 def print_result(results):
+    if not results:
+        print("\n[-] No active hosts found. Check your subnet range or if AP Isolation is enabled on your router")
+        return
+
     print(f"{'IP Address':<16} | {'MAC Address':<18} | {'Hostname':<20} | {'Vendor':<20} | {'Open Services'}")
-    print("-" * 95)
+    print("-" * 105)
     for client in results:
         print(f"{client['ip']:<16} | {client['mac']:<18} | {client['hostname']:<20} | {client['vendor']:<20} | {client['services']}")
+    print(f"\n[+] Total active hosts discovered: {len(results)}\n")
 
 def main():
-    parser = argparse.ArgumentParser(description="Advanced ARP Network Discovery Tool")
+    parser = argparse.ArgumentParser(description="Advanced ARP Network Discovery Tool & Recon Tool")
     parser.add_argument("range", help="IP range to scan (e.g., 192.168.1.1/24)")
+    parser.add_argument("-i", "--interface", help="Network interface to use (e.g., wlan0, eth0)", default=None)
     args = parser.parse_args()
 
     print(f"[*] Scanning {args.range} for live hosts and gathering details...")
